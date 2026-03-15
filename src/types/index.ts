@@ -155,7 +155,7 @@ export interface ToolResult {
 export interface ReviewConfig {
   anthropic_api_key: string;
   gemini_api_key?: string;
-  openai_api_key: string;
+  openai_api_key?: string;
   github_token: string;
   github_owner: string;
   github_repo: string;

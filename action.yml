@@ -26,8 +26,13 @@ inputs:
     required: false
     default: ""
   openai_api_key:
-    description: "OpenAI API key for embeddings"
-    required: true
+    description: "OpenAI API key for embeddings (not needed if using Gemini embeddings)"
+    required: false
+    default: ""
+  embedding_model:
+    description: "Embedding model (text-embedding-3-small for OpenAI, gemini-embedding-001 for Gemini)"
+    required: false
+    default: "text-embedding-3-small"
   github_token:
     description: "GitHub token for PR access (defaults to GITHUB_TOKEN)"
     required: false
@@ -95,6 +100,8 @@ runs:
       working-directory: ${{ github.action_path }}
       env:
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        EMBEDDING_MODEL: ${{ inputs.embedding_model }}
       run: |
         if [ ! -f .vector-store/code.json ]; then
           node dist/index.js index --path ${{ github.workspace }}
@@ -123,6 +130,7 @@ runs:
         GITHUB_REPO: ${{ github.event.repository.name }}
         MODEL_REVIEW_AGENT: ${{ inputs.model_review }}
         MODEL_SIMPLE_REVIEW: ${{ inputs.model_simple }}
+        EMBEDDING_MODEL: ${{ inputs.embedding_model }}
         MAX_FINDINGS_BEFORE_ESCALATION: ${{ inputs.max_findings }}
       run: |
         POST_FLAG=""

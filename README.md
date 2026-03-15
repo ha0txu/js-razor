@@ -63,7 +63,7 @@ npm run review -- --pr 123 --post
 |---|---|---|
 | `ANTHROPIC_API_KEY` | If using `claude-*` models | Claude API access |
 | `GEMINI_API_KEY` | If using `gemini-*` models | Gemini API access |
-| `OPENAI_API_KEY` | Yes | Embedding generation for RAG |
+| `OPENAI_API_KEY` | If using OpenAI embeddings | Embedding generation for RAG (not needed with Gemini embeddings) |
 | `GITHUB_TOKEN` | Yes | PR access and comment posting |
 
 ### Model Selection
@@ -86,6 +86,35 @@ MODEL_SIMPLE_REVIEW=gemini-2.5-flash
 ```
 
 Only the API keys for providers you actually use are required.
+
+### Embedding Model
+
+The embedding model is used for RAG vector indexing. Provider is auto-detected from the model name:
+
+```bash
+# OpenAI embeddings (default) — requires OPENAI_API_KEY
+EMBEDDING_MODEL=text-embedding-3-small
+
+# Gemini embeddings — uses GEMINI_API_KEY, no OpenAI key needed
+EMBEDDING_MODEL=gemini-embedding-001
+```
+
+Supported models: `text-embedding-3-small`, `text-embedding-3-large` (OpenAI), `gemini-embedding-001`, `text-embedding-004` (Gemini).
+
+### Gemini-Only Setup
+
+To run the entire system with **only a Gemini API key** (no OpenAI or Anthropic keys):
+
+```bash
+GEMINI_API_KEY=AIza...
+MODEL_ORCHESTRATOR=gemini-2.5-pro
+MODEL_REVIEW_AGENT=gemini-2.5-pro
+MODEL_VERIFICATION=gemini-2.5-pro
+MODEL_SIMPLE_REVIEW=gemini-2.5-flash
+EMBEDDING_MODEL=gemini-embedding-001
+```
+
+A dedicated GitHub Actions workflow for this setup is provided in `.github/workflows/code-review-gemini.yml`.
 
 ### Review Rules
 
@@ -138,9 +167,9 @@ Run `npm run index-prs` periodically (or set up the weekly GitHub Action) to kee
 
 Add these secrets to your repo (Settings → Secrets → Actions):
 - `ANTHROPIC_API_KEY` and/or `GEMINI_API_KEY`
-- `OPENAI_API_KEY`
+- `OPENAI_API_KEY` (only if using OpenAI embeddings)
 
-Copy `.github/workflows/code-review.yml` to your repo. PRs will be reviewed automatically.
+Copy `.github/workflows/code-review.yml` to your repo (or `code-review-gemini.yml` for a Gemini-only setup). PRs will be reviewed automatically.
 
 ### As a Reusable Action
 
@@ -187,7 +216,7 @@ src/
 │   └── ranking-agent.ts
 ├── rag/
 │   ├── code-parser.ts  # JS/TS semantic chunking
-│   ├── embeddings.ts   # OpenAI embedding service
+│   ├── embeddings.ts   # Embedding service (OpenAI + Gemini)
 │   ├── vector-store.ts # Local cosine-similarity store
 │   ├── indexer.ts       # Code + PR history indexer
 │   └── retriever.ts     # Context retrieval for agents
