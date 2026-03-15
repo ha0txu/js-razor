@@ -3,6 +3,7 @@ import type { LLMClient, LLMMessage, LLMContent } from "../providers/types.js";
 import { createClient } from "../providers/index.js";
 import { AgentToolkit } from "../tools/agent-tools.js";
 import { VERIFICATION_AGENT_PROMPT } from "../prompts/system-prompts.js";
+import { extractJsonArray } from "../utils/json-extract.js";
 
 /**
  * Verification Agent: Cross-verifies findings from all specialized agents.
@@ -199,11 +200,18 @@ export class VerificationAgent {
     modified_finding?: Finding;
   }> {
     try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) return [];
-      return JSON.parse(jsonMatch[0]);
-    } catch {
-      console.warn("  [verification] Failed to parse verdicts");
+      const jsonStr = extractJsonArray(text);
+      if (!jsonStr) {
+        console.warn("  [verification] No JSON array found in response. Raw text (first 500 chars):");
+        console.warn(text.slice(0, 500));
+        return [];
+      }
+      const verdicts = JSON.parse(jsonStr);
+      console.log(`  [verification] Parsed ${verdicts.length} verdicts`);
+      return verdicts;
+    } catch (e) {
+      console.warn(`  [verification] Failed to parse verdicts: ${(e as Error).message}`);
+      console.warn(`  [verification] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`);
       return [];
     }
   }

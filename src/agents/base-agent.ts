@@ -10,6 +10,7 @@ import { createClient } from "../providers/index.js";
 import { AgentToolkit } from "../tools/agent-tools.js";
 import { Retriever } from "../rag/retriever.js";
 import { buildAgentPrompt } from "../prompts/system-prompts.js";
+import { extractJsonArray } from "../utils/json-extract.js";
 
 /**
  * Base class for all review agents.
@@ -177,19 +178,28 @@ export class BaseReviewAgent {
 
   /**
    * Parse the agent's text response into structured findings.
-   * Handles various JSON extraction scenarios.
+   * Handles various JSON extraction scenarios including:
+   *   - Raw JSON array
+   *   - JSON wrapped in markdown code blocks (```json ... ```)
+   *   - JSON preceded/followed by explanatory text
+   *   - Gemini thinking models that include reasoning before the JSON
    */
   private parseFindings(text: string): Finding[] {
     try {
-      // Try to extract JSON array from the response
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) return [];
+      const jsonStr = extractJsonArray(text);
+      if (!jsonStr) {
+        console.warn(`  [${this.name}] No JSON array found in response. Raw text (first 500 chars):\n${text.slice(0, 500)}`);
+        return [];
+      }
 
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (!Array.isArray(parsed)) return [];
+      const parsed = JSON.parse(jsonStr);
+      if (!Array.isArray(parsed)) {
+        console.warn(`  [${this.name}] Parsed JSON is not an array. Type: ${typeof parsed}`);
+        return [];
+      }
 
       // Validate and normalize each finding
-      return parsed
+      const findings = parsed
         .filter((f: Record<string, unknown>) =>
           f.file && f.line_start && f.severity && f.title && f.description,
         )
@@ -206,11 +216,16 @@ export class BaseReviewAgent {
           confidence: Math.min(1, Math.max(0, Number(f.confidence ?? 0.5))),
           similar_pr_reference: f.similar_pr_reference ? String(f.similar_pr_reference) : undefined,
         })) as Finding[];
-    } catch {
-      console.warn(`  [${this.name}] Failed to parse findings from response`);
+
+      console.log(`  [${this.name}] Parsed ${findings.length} findings from ${parsed.length} raw items`);
+      return findings;
+    } catch (e) {
+      console.warn(`  [${this.name}] Failed to parse findings: ${(e as Error).message}`);
+      console.warn(`  [${this.name}] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`);
       return [];
     }
   }
+
 }
 
 function normalizeSeverity(s: string): Finding["severity"] {

@@ -2,6 +2,7 @@ import type { ReviewConfig, Finding, ReviewOutput, PRMetadata, ComplexityAssessm
 import type { LLMClient } from "../providers/types.js";
 import { createClient } from "../providers/index.js";
 import { RANKING_AGENT_PROMPT } from "../prompts/system-prompts.js";
+import { extractJsonObject } from "../utils/json-extract.js";
 
 /**
  * Ranking Agent: Deduplicates, ranks, and summarizes verified findings.
@@ -169,16 +170,21 @@ export class RankingAgent {
     originalFindings: Finding[],
   ): { findings: Finding[]; summary: string } {
     try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
+      const jsonStr = extractJsonObject(text);
+      if (!jsonStr) {
+        console.warn("  [ranking] No JSON object found in response. Raw text (first 500 chars):");
+        console.warn(text.slice(0, 500));
         return { findings: originalFindings, summary: "Review complete." };
       }
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonStr);
+      console.log(`  [ranking] Parsed result: ${parsed.findings?.length ?? 0} findings, summary length: ${parsed.summary?.length ?? 0}`);
       return {
         findings: parsed.findings ?? originalFindings,
         summary: parsed.summary ?? "Review complete.",
       };
-    } catch {
+    } catch (e) {
+      console.warn(`  [ranking] Failed to parse ranking result: ${(e as Error).message}`);
+      console.warn(`  [ranking] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`);
       return { findings: originalFindings, summary: "Review complete." };
     }
   }
