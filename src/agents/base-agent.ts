@@ -137,6 +137,8 @@ export class BaseReviewAgent {
             id: tc.id,
             name: tc.name,
             input: tc.input,
+            // Preserve Gemini thought signature for multi-turn tool use
+            ...(tc.thought_signature ? { thought_signature: tc.thought_signature } : {}),
           });
         }
         messages.push({ role: "assistant", content: assistantContent });

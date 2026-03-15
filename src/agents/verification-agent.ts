@@ -118,6 +118,7 @@ export class VerificationAgent {
             id: tc.id,
             name: tc.name,
             input: tc.input,
+            ...(tc.thought_signature ? { thought_signature: tc.thought_signature } : {}),
           });
         }
         messages.push({ role: "assistant", content: assistantContent });

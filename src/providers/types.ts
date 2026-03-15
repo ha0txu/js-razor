@@ -13,7 +13,7 @@ export interface LLMMessage {
 
 export type LLMContent =
   | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown>; thought_signature?: string }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
 
 export interface LLMToolDefinition {
@@ -28,6 +28,8 @@ export interface LLMResponse {
     id: string;
     name: string;
     input: Record<string, unknown>;
+    /** Gemini thought signature — must be preserved and sent back in the next turn */
+    thought_signature?: string;
   }>;
   stop_reason: "end_turn" | "tool_use" | "max_tokens" | "other";
   usage: {

@@ -30,7 +30,7 @@ interface GeminiContent {
 
 type GeminiPart =
   | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
+  | { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string }
   | { functionResponse: { name: string; response: { content: unknown } } };
 
 interface GeminiTool {
@@ -135,12 +135,18 @@ export class GeminiClient implements LLMClient {
           case "text":
             parts.push({ text: c.text });
             break;
-          case "tool_use":
+          case "tool_use": {
             // Model's function calls (in assistant messages)
-            parts.push({
+            // Preserve thoughtSignature if present (required by Gemini 3+ models)
+            const fcPart: GeminiPart = {
               functionCall: { name: c.name, args: c.input },
-            });
+            };
+            if (c.thought_signature) {
+              (fcPart as { functionCall: unknown; thoughtSignature?: string }).thoughtSignature = c.thought_signature;
+            }
+            parts.push(fcPart);
             break;
+          }
           case "tool_result":
             // User's function responses
             parts.push({
@@ -242,6 +248,8 @@ export class GeminiClient implements LLMClient {
           id: `gemini_tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           name: part.functionCall.name,
           input: part.functionCall.args,
+          // Preserve thought signature (required by Gemini 3+ models for multi-turn tool use)
+          thought_signature: (part as { thoughtSignature?: string }).thoughtSignature,
         });
       }
     }
