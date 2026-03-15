@@ -160,12 +160,20 @@ export class VerificationAgent {
         if (idx < 0 || idx >= findings.length) continue;
 
         if (verdict.verdict === "confirmed") {
+          console.log(`  [verification] ✅ CONFIRMED [#${idx}] ${findings[idx].severity.toUpperCase()} — ${findings[idx].title}`);
+          console.log(`     Reason: ${verdict.reason}`);
           verifiedFindings.push(findings[idx]);
         } else if (verdict.verdict === "modified" && verdict.modified_finding) {
+          console.log(`  [verification] ✏️  MODIFIED [#${idx}] ${findings[idx].severity.toUpperCase()} — ${findings[idx].title}`);
+          console.log(`     Reason: ${verdict.reason}`);
           verifiedFindings.push({
             ...findings[idx],
             ...verdict.modified_finding,
           });
+        } else if (verdict.verdict === "rejected") {
+          console.log(`  [verification] ❌ REJECTED [#${idx}] ${findings[idx].severity.toUpperCase()} — ${findings[idx].title}`);
+          console.log(`     File: ${findings[idx].file}:${findings[idx].line_start}-${findings[idx].line_end}`);
+          console.log(`     Reason: ${verdict.reason}`);
         }
       }
 
@@ -175,6 +183,7 @@ export class VerificationAgent {
       );
       for (let i = 0; i < findings.length; i++) {
         if (!coveredIndices.has(i)) {
+          console.log(`  [verification] ⚠️  UNVERIFIED [#${i}] ${findings[i].severity.toUpperCase()} — ${findings[i].title} (kept at lower confidence)`);
           verifiedFindings.push({
             ...findings[i],
             confidence: Math.min(findings[i].confidence, 0.6),
@@ -185,9 +194,15 @@ export class VerificationAgent {
       const rejectedCount = verdicts.filter(
         (v) => v.verdict === "rejected",
       ).length;
+      const confirmedCount = verdicts.filter(
+        (v) => v.verdict === "confirmed",
+      ).length;
+      const modifiedCount = verdicts.filter(
+        (v) => v.verdict === "modified",
+      ).length;
       console.log(
-        `  [verification] ${verifiedFindings.length} confirmed, ${rejectedCount} rejected, ` +
-          `${findings.length - coveredIndices.size} unverified (kept at lower confidence)`,
+        `  [verification] Summary: ${confirmedCount} confirmed, ${modifiedCount} modified, ${rejectedCount} rejected, ` +
+          `${findings.length - coveredIndices.size} unverified — ${verifiedFindings.length} findings passed`,
       );
 
       return {
