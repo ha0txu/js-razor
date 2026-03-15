@@ -8,7 +8,7 @@
 #       anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 #       openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 
-name: "AI Code Review Agent"
+name: "AI Code Review Agent - Razor"
 description: "Multi-agent code review for JavaScript/TypeScript React & Node.js projects"
 author: "Your Team"
 
