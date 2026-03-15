@@ -1,0 +1,149 @@
+# ─── Reusable GitHub Action ──────────────────────────────────────────────────
+#
+# Use this if you want to publish the review agent as a reusable action
+# that other repos can reference:
+#
+#   - uses: your-org/code-review-agent@v1
+#     with:
+#       anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+#       openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+
+name: "AI Code Review Agent"
+description: "Multi-agent code review for JavaScript/TypeScript React & Node.js projects"
+author: "Your Team"
+
+branding:
+  icon: "search"
+  color: "blue"
+
+inputs:
+  anthropic_api_key:
+    description: "Anthropic API key for Claude"
+    required: true
+  openai_api_key:
+    description: "OpenAI API key for embeddings"
+    required: true
+  github_token:
+    description: "GitHub token for PR access (defaults to GITHUB_TOKEN)"
+    required: false
+    default: ${{ github.token }}
+  pr_number:
+    description: "PR number to review (auto-detected from event)"
+    required: false
+  post_review:
+    description: "Post review comments to the PR"
+    required: false
+    default: "true"
+  fail_on_critical:
+    description: "Fail the action if critical issues are found"
+    required: false
+    default: "true"
+  model_review:
+    description: "Claude model for review agents"
+    required: false
+    default: "claude-sonnet-4-20250514"
+  model_simple:
+    description: "Claude model for simple/trivial PRs"
+    required: false
+    default: "claude-haiku-4-5-20251001"
+  max_findings:
+    description: "Maximum findings before escalation warning"
+    required: false
+    default: "25"
+
+outputs:
+  findings_count:
+    description: "Total number of findings"
+    value: ${{ steps.review.outputs.findings_count }}
+  critical_count:
+    description: "Number of critical findings"
+    value: ${{ steps.review.outputs.critical_count }}
+  review_summary:
+    description: "Brief review summary"
+    value: ${{ steps.review.outputs.summary }}
+  result_json:
+    description: "Full review result as JSON"
+    value: ${{ steps.review.outputs.result_json }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install agent
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci && npm run build
+
+    - name: Restore vector store
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.action_path }}/.vector-store
+        key: ai-review-vectors-${{ hashFiles('src/**/*.ts', 'src/**/*.tsx', 'src/**/*.js', 'src/**/*.jsx') }}
+        restore-keys: ai-review-vectors-
+
+    - name: Index codebase
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+      run: |
+        if [ ! -f .vector-store/code.json ]; then
+          node dist/index.js index --path ${{ github.workspace }}
+        fi
+
+    - name: Determine PR number
+      id: pr_num
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.pr_number }}" ]; then
+          echo "number=${{ inputs.pr_number }}" >> $GITHUB_OUTPUT
+        else
+          echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Run review
+      id: review
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        GITHUB_OWNER: ${{ github.repository_owner }}
+        GITHUB_REPO: ${{ github.event.repository.name }}
+        MODEL_REVIEW_AGENT: ${{ inputs.model_review }}
+        MODEL_SIMPLE_REVIEW: ${{ inputs.model_simple }}
+        MAX_FINDINGS_BEFORE_ESCALATION: ${{ inputs.max_findings }}
+      run: |
+        POST_FLAG=""
+        if [ "${{ inputs.post_review }}" = "true" ]; then
+          POST_FLAG="--post"
+        fi
+
+        node dist/index.js review \
+          --pr ${{ steps.pr_num.outputs.number }} \
+          $POST_FLAG \
+          --output result.json
+
+        # Extract outputs
+        FINDINGS=$(node -e "const r=require('./result.json'); console.log(r.stats?.total_findings ?? 0)")
+        CRITICALS=$(node -e "const r=require('./result.json'); console.log(r.stats?.by_severity?.critical ?? 0)")
+        SUMMARY=$(node -e "const r=require('./result.json'); console.log(r.summary ?? 'Review complete')")
+
+        echo "findings_count=$FINDINGS" >> $GITHUB_OUTPUT
+        echo "critical_count=$CRITICALS" >> $GITHUB_OUTPUT
+        echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+        echo "result_json=$(cat result.json | jq -c)" >> $GITHUB_OUTPUT
+
+    - name: Fail on critical
+      if: inputs.fail_on_critical == 'true'
+      shell: bash
+      run: |
+        if [ "${{ steps.review.outputs.critical_count }}" -gt "0" ]; then
+          echo "::error::Found ${{ steps.review.outputs.critical_count }} critical issue(s)"
+          exit 1
+        fi

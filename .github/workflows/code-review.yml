@@ -1,0 +1,151 @@
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      # Only trigger on JS/TS file changes
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+      - "package.json"
+      - "tsconfig.json"
+
+  # Allow manual trigger from Actions tab
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to review"
+        required: true
+        type: number
+
+# Prevent concurrent reviews on the same PR
+concurrency:
+  group: code-review-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write  # Required to post review comments
+
+jobs:
+  review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    # Skip draft PRs and bot PRs
+    if: |
+      (github.event_name == 'workflow_dispatch') ||
+      (!github.event.pull_request.draft &&
+       github.actor != 'dependabot[bot]' &&
+       github.actor != 'renovate[bot]')
+    timeout-minutes: 10
+
+    steps:
+      # ─── Setup ────────────────────────────────────────────────────
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history for RAG context
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: .github/code-review-agent/package-lock.json
+
+      # ─── Install & Build Agent ────────────────────────────────────
+
+      - name: Install review agent dependencies
+        working-directory: .github/code-review-agent
+        run: npm ci
+
+      - name: Build review agent
+        working-directory: .github/code-review-agent
+        run: npm run build
+
+      # ─── Restore RAG Index Cache ──────────────────────────────────
+      # The vector store is cached between runs to avoid re-indexing
+      # on every PR. The cache key rotates weekly or when code changes
+      # significantly.
+
+      - name: Restore vector store cache
+        uses: actions/cache@v4
+        with:
+          path: .github/code-review-agent/.vector-store
+          key: review-agent-vectors-${{ hashFiles('src/**/*.ts', 'src/**/*.tsx') }}
+          restore-keys: |
+            review-agent-vectors-
+
+      # ─── Index Codebase (if cache miss) ───────────────────────────
+
+      - name: Index codebase for RAG
+        working-directory: .github/code-review-agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ ! -f .vector-store/code.json ]; then
+            echo "Cache miss — indexing codebase..."
+            node dist/index.js index --path ${{ github.workspace }}
+          else
+            echo "Using cached code index"
+          fi
+
+      # ─── Run Review ──────────────────────────────────────────────
+
+      - name: Determine PR number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "number=${{ github.event.inputs.pr_number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run code review
+        working-directory: .github/code-review-agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          VECTOR_STORE_PATH: ./.vector-store
+        run: |
+          node dist/index.js review \
+            --pr ${{ steps.pr.outputs.number }} \
+            --post \
+            --output review-result.json
+
+      # ─── Upload Review Artifact ───────────────────────────────────
+
+      - name: Upload review results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-result-pr-${{ steps.pr.outputs.number }}
+          path: .github/code-review-agent/review-result.json
+          retention-days: 30
+
+      # ─── Fail on Critical Findings ────────────────────────────────
+      # Optional: make the check fail if critical issues are found.
+      # This blocks merging until issues are addressed.
+
+      - name: Check for critical findings
+        working-directory: .github/code-review-agent
+        run: |
+          if [ -f review-result.json ]; then
+            CRITICALS=$(node -e "
+              const r = require('./review-result.json');
+              console.log(r.stats?.by_severity?.critical ?? 0);
+            ")
+            echo "Critical findings: $CRITICALS"
+            if [ "$CRITICALS" -gt "0" ]; then
+              echo "::error::Found $CRITICALS critical issue(s). Please address before merging."
+              exit 1
+            fi
+          fi

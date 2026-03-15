@@ -1,0 +1,81 @@
+name: Index PR History for RAG
+
+# Run weekly to keep bugfix history up to date,
+# and allow manual trigger after major releases.
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Every Monday at 3am UTC
+  workflow_dispatch:
+    inputs:
+      max_prs:
+        description: "Maximum PRs to index"
+        required: false
+        default: "200"
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  index:
+    name: Index PR History
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: .github/code-review-agent/package-lock.json
+
+      - name: Install dependencies
+        working-directory: .github/code-review-agent
+        run: npm ci
+
+      - name: Build
+        working-directory: .github/code-review-agent
+        run: npm run build
+
+      # Restore existing PR index (if any)
+      - name: Restore PR history cache
+        uses: actions/cache@v4
+        with:
+          path: .github/code-review-agent/.vector-store/pr-history.json
+          key: review-agent-pr-history-${{ github.run_id }}
+          restore-keys: |
+            review-agent-pr-history-
+
+      - name: Index PR history
+        working-directory: .github/code-review-agent
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPO: ${{ github.event.repository.name }}
+          ANTHROPIC_API_KEY: "not-needed-for-indexing"
+          VECTOR_STORE_PATH: ./.vector-store
+        run: |
+          MAX=${{ github.event.inputs.max_prs || '200' }}
+          echo "Indexing up to $MAX PRs..."
+          node dist/index.js index-prs --max $MAX
+
+      # Save the updated index as a workflow artifact
+      # and to the cache for the review workflow.
+      - name: Save PR history index
+        uses: actions/cache/save@v4
+        with:
+          path: .github/code-review-agent/.vector-store/pr-history.json
+          key: review-agent-pr-history-${{ github.run_id }}
+
+      - name: Upload PR history index
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-history-index
+          path: .github/code-review-agent/.vector-store/pr-history.json
+          retention-days: 90

@@ -1,0 +1,39 @@
+{
+  "name": "code-review-agent",
+  "version": "1.0.0",
+  "description": "Multi-agent code review system for JavaScript/TypeScript React & Node.js projects",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "code-review": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "index": "tsx src/cli.ts index",
+    "review": "tsx src/cli.ts review",
+    "index-prs": "tsx src/cli.ts index-prs",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/rest": "^21.0.0",
+    "commander": "^13.0.0",
+    "dotenv": "^16.4.0",
+    "glob": "^11.0.0",
+    "ignore": "^7.0.0",
+    "openai": "^4.80.0",
+    "p-limit": "^6.2.0",
+    "simple-git": "^3.27.0",
+    "tiktoken": "^1.0.18",
+    "vectra": "^0.9.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
