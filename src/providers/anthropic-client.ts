@@ -16,6 +16,12 @@ export class AnthropicClient implements LLMClient {
   private client: Anthropic;
 
   constructor(apiKey: string) {
+    if (!apiKey) {
+      throw new Error(
+        "ANTHROPIC_API_KEY is required when using Claude models. " +
+        "Set it in your .env file or environment variables.",
+      );
+    }
     this.client = new Anthropic({ apiKey });
   }
 

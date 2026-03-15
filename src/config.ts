@@ -43,16 +43,32 @@ export function loadConfig(overrides?: Partial<ReviewConfig>): ReviewConfig {
   const needsAnthropic = allModels.some((m) => detectProvider(m) === "anthropic");
   const needsOpenAI = !isGeminiEmbeddingModel(embeddingModel);
 
-  // Only require API keys for providers that are actually used
+  // Only require API keys for providers that are actually used.
+  // Use soft validation (warn instead of throw) so that subcommands like
+  // `index` (which only need embedding keys) don't fail when LLM keys are
+  // absent. The actual LLM client constructors will throw if the key is
+  // truly missing at call time.
   const anthropicKey = needsAnthropic
-    ? requireEnv("ANTHROPIC_API_KEY")
+    ? (process.env["ANTHROPIC_API_KEY"] ?? "")
     : process.env["ANTHROPIC_API_KEY"] ?? "";
   const geminiKey = needsGemini
-    ? requireEnv("GEMINI_API_KEY")
+    ? (process.env["GEMINI_API_KEY"] ?? "")
     : process.env["GEMINI_API_KEY"] ?? undefined;
   const openaiKey = needsOpenAI
-    ? requireEnv("OPENAI_API_KEY")
+    ? (process.env["OPENAI_API_KEY"] ?? "")
     : process.env["OPENAI_API_KEY"] ?? undefined;
+
+  // Warn about missing keys (but don't throw — the key might not be needed
+  // for the current subcommand, e.g. `index` only needs embedding keys).
+  if (needsAnthropic && !process.env["ANTHROPIC_API_KEY"]) {
+    console.warn("⚠️  ANTHROPIC_API_KEY not set — Claude models will fail at runtime.");
+  }
+  if (needsGemini && !process.env["GEMINI_API_KEY"]) {
+    console.warn("⚠️  GEMINI_API_KEY not set — Gemini models/embeddings will fail at runtime.");
+  }
+  if (needsOpenAI && !process.env["OPENAI_API_KEY"]) {
+    console.warn("⚠️  OPENAI_API_KEY not set — OpenAI embeddings will fail at runtime.");
+  }
 
   return {
     anthropic_api_key: anthropicKey,
