@@ -5,6 +5,7 @@
  *   - Markdown code blocks (```json ... ```)
  *   - Explanatory text before/after the JSON
  *   - Reasoning steps followed by the actual output
+ *   - Truncated output (max_tokens hit mid-JSON)
  *
  * These helpers handle all of those cases.
  */
@@ -31,7 +32,19 @@ export function extractJsonArray(text: string): string | null {
 
   // Strategy 3: Greedy regex fallback
   const greedyMatch = text.match(/\[[\s\S]*\]/);
-  return greedyMatch ? greedyMatch[0] : null;
+  if (greedyMatch) {
+    try { JSON.parse(greedyMatch[0]); return greedyMatch[0]; } catch { /* fall through */ }
+  }
+
+  // Strategy 4: Truncated JSON recovery — response was likely cut off by max_tokens.
+  // Find the start of the array and salvage all complete JSON objects within it.
+  const repaired = repairTruncatedArray(text);
+  if (repaired) {
+    console.warn("  [json-extract] Recovered truncated JSON array — response may have been cut off by max_tokens");
+    return repaired;
+  }
+
+  return null;
 }
 
 /**
@@ -56,7 +69,11 @@ export function extractJsonObject(text: string): string | null {
 
   // Strategy 3: Greedy regex fallback
   const greedyMatch = text.match(/\{[\s\S]*\}/);
-  return greedyMatch ? greedyMatch[0] : null;
+  if (greedyMatch) {
+    try { JSON.parse(greedyMatch[0]); return greedyMatch[0]; } catch { /* fall through */ }
+  }
+
+  return null;
 }
 
 /**
@@ -93,4 +110,53 @@ function findBalancedBrackets(
   }
 
   return null;
+}
+
+/**
+ * Attempt to recover complete items from a truncated JSON array.
+ *
+ * When the LLM hits max_tokens, the output is cut mid-JSON like:
+ *   [{ "file": "a.ts", ... }, { "file": "b.ts", ... }, { "file": "c.ts", "tit
+ *
+ * This function finds all complete top-level objects within the array
+ * and reconstructs a valid JSON array from them.
+ */
+function repairTruncatedArray(text: string): string | null {
+  const arrayStart = text.indexOf("[");
+  if (arrayStart === -1) return null;
+
+  // Walk through the text after '[', collecting complete top-level objects
+  const items: string[] = [];
+  let i = arrayStart + 1;
+
+  while (i < text.length) {
+    // Skip whitespace and commas
+    while (i < text.length && /[\s,]/.test(text[i])) i++;
+    if (i >= text.length || text[i] === "]") break;
+
+    if (text[i] === "{") {
+      // Try to find the balanced closing brace for this object
+      const objStr = findBalancedBrackets(text.slice(i), "{", "}");
+      if (objStr) {
+        // Verify it's actually valid JSON
+        try {
+          JSON.parse(objStr);
+          items.push(objStr);
+          i += objStr.length;
+        } catch {
+          // Object found but not valid JSON — skip it
+          break;
+        }
+      } else {
+        // Unbalanced braces — this object was truncated, stop here
+        break;
+      }
+    } else {
+      // Unexpected character — stop
+      break;
+    }
+  }
+
+  if (items.length === 0) return null;
+  return `[${items.join(",")}]`;
 }

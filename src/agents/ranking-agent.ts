@@ -1,4 +1,11 @@
-import type { ReviewConfig, Finding, ReviewOutput, PRMetadata, ComplexityAssessment, Severity } from "../types/index.js";
+import type {
+  ReviewConfig,
+  Finding,
+  ReviewOutput,
+  PRMetadata,
+  ComplexityAssessment,
+  Severity,
+} from "../types/index.js";
 import type { LLMClient } from "../providers/types.js";
 import { createClient } from "../providers/index.js";
 import { RANKING_AGENT_PROMPT } from "../prompts/system-prompts.js";
@@ -52,14 +59,22 @@ export class RankingAgent {
 
     // For small finding sets, do local dedup + ranking (no LLM call needed)
     if (findings.length <= 5) {
-      return this.localRankAndSummarize(findings, prMetadata, complexity, stats);
+      return this.localRankAndSummarize(
+        findings,
+        prMetadata,
+        complexity,
+        stats,
+      );
     }
 
     // For larger sets, use Claude for intelligent dedup and summary
     try {
       const prompt = [
         `PR #${prMetadata.number}: "${prMetadata.title}" by ${prMetadata.author}`,
-        `Files changed: ${findings.map((f) => f.file).filter((v, i, a) => a.indexOf(v) === i).join(", ")}`,
+        `Files changed: ${findings
+          .map((f) => f.file)
+          .filter((v, i, a) => a.indexOf(v) === i)
+          .join(", ")}`,
         "",
         `${findings.length} verified findings to rank and deduplicate:`,
         "",
@@ -68,7 +83,7 @@ export class RankingAgent {
 
       const response = await this.client.chat({
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: 163840,
         system: RANKING_AGENT_PROMPT,
         messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
       });
@@ -92,7 +107,12 @@ export class RankingAgent {
       };
     } catch {
       // Fallback to local ranking
-      return this.localRankAndSummarize(findings, prMetadata, complexity, stats);
+      return this.localRankAndSummarize(
+        findings,
+        prMetadata,
+        complexity,
+        stats,
+      );
     }
   }
 
@@ -121,7 +141,8 @@ export class RankingAgent {
       nitpick: 3,
     };
     deduped.sort((a, b) => {
-      const sevDiff = (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3);
+      const sevDiff =
+        (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3);
       if (sevDiff !== 0) return sevDiff;
       return b.confidence - a.confidence;
     });
@@ -172,19 +193,27 @@ export class RankingAgent {
     try {
       const jsonStr = extractJsonObject(text);
       if (!jsonStr) {
-        console.warn("  [ranking] No JSON object found in response. Raw text (first 500 chars):");
+        console.warn(
+          "  [ranking] No JSON object found in response. Raw text (first 500 chars):",
+        );
         console.warn(text.slice(0, 500));
         return { findings: originalFindings, summary: "Review complete." };
       }
       const parsed = JSON.parse(jsonStr);
-      console.log(`  [ranking] Parsed result: ${parsed.findings?.length ?? 0} findings, summary length: ${parsed.summary?.length ?? 0}`);
+      console.log(
+        `  [ranking] Parsed result: ${parsed.findings?.length ?? 0} findings, summary length: ${parsed.summary?.length ?? 0}`,
+      );
       return {
         findings: parsed.findings ?? originalFindings,
         summary: parsed.summary ?? "Review complete.",
       };
     } catch (e) {
-      console.warn(`  [ranking] Failed to parse ranking result: ${(e as Error).message}`);
-      console.warn(`  [ranking] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`);
+      console.warn(
+        `  [ranking] Failed to parse ranking result: ${(e as Error).message}`,
+      );
+      console.warn(
+        `  [ranking] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`,
+      );
       return { findings: originalFindings, summary: "Review complete." };
     }
   }
@@ -209,7 +238,12 @@ function deduplicateFindings(findings: Finding[]): Finding[] {
 }
 
 function countBySeverity(findings: Finding[]): Record<Severity, number> {
-  const counts: Record<Severity, number> = { critical: 0, warning: 0, suggestion: 0, nitpick: 0 };
+  const counts: Record<Severity, number> = {
+    critical: 0,
+    warning: 0,
+    suggestion: 0,
+    nitpick: 0,
+  };
   for (const f of findings) {
     counts[f.severity] = (counts[f.severity] ?? 0) + 1;
   }

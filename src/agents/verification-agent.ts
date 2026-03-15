@@ -1,4 +1,10 @@
-import type { ReviewConfig, Finding, AgentResult, FileDiff, ToolCall } from "../types/index.js";
+import type {
+  ReviewConfig,
+  Finding,
+  AgentResult,
+  FileDiff,
+  ToolCall,
+} from "../types/index.js";
 import type { LLMClient, LLMMessage, LLMContent } from "../providers/types.js";
 import { createClient } from "../providers/index.js";
 import { AgentToolkit } from "../tools/agent-tools.js";
@@ -64,7 +70,9 @@ export class VerificationAgent {
             `Code: ${f.code_snippet}`,
             f.suggestion ? `Suggestion: ${f.suggestion}` : "",
             f.similar_pr_reference ? `Past PR: ${f.similar_pr_reference}` : "",
-          ].filter(Boolean).join("\n");
+          ]
+            .filter(Boolean)
+            .join("\n");
         })
         .join("\n\n");
 
@@ -95,15 +103,19 @@ export class VerificationAgent {
 
         const response = await this.client.chat({
           model: this.model,
-          max_tokens: 4096,
+          max_tokens: 163840,
           system: VERIFICATION_AGENT_PROMPT,
           messages,
           tools: this.toolkit.getToolDefinitions(),
         });
 
-        totalTokens += response.usage.input_tokens + response.usage.output_tokens;
+        totalTokens +=
+          response.usage.input_tokens + response.usage.output_tokens;
 
-        if (response.tool_calls.length === 0 || response.stop_reason === "end_turn") {
+        if (
+          response.tool_calls.length === 0 ||
+          response.stop_reason === "end_turn"
+        ) {
           verdicts = this.parseVerdicts(response.text_content);
           break;
         }
@@ -119,7 +131,9 @@ export class VerificationAgent {
             id: tc.id,
             name: tc.name,
             input: tc.input,
-            ...(tc.thought_signature ? { thought_signature: tc.thought_signature } : {}),
+            ...(tc.thought_signature
+              ? { thought_signature: tc.thought_signature }
+              : {}),
           });
         }
         messages.push({ role: "assistant", content: assistantContent });
@@ -156,7 +170,9 @@ export class VerificationAgent {
       }
 
       // Findings not covered by any verdict are kept (conservative approach)
-      const coveredIndices = new Set(verdicts.map((v) => v.original_finding_index));
+      const coveredIndices = new Set(
+        verdicts.map((v) => v.original_finding_index),
+      );
       for (let i = 0; i < findings.length; i++) {
         if (!coveredIndices.has(i)) {
           verifiedFindings.push({
@@ -166,10 +182,12 @@ export class VerificationAgent {
         }
       }
 
-      const rejectedCount = verdicts.filter((v) => v.verdict === "rejected").length;
+      const rejectedCount = verdicts.filter(
+        (v) => v.verdict === "rejected",
+      ).length;
       console.log(
         `  [verification] ${verifiedFindings.length} confirmed, ${rejectedCount} rejected, ` +
-        `${findings.length - coveredIndices.size} unverified (kept at lower confidence)`,
+          `${findings.length - coveredIndices.size} unverified (kept at lower confidence)`,
       );
 
       return {
@@ -202,7 +220,9 @@ export class VerificationAgent {
     try {
       const jsonStr = extractJsonArray(text);
       if (!jsonStr) {
-        console.warn("  [verification] No JSON array found in response. Raw text (first 500 chars):");
+        console.warn(
+          "  [verification] No JSON array found in response. Raw text (first 500 chars):",
+        );
         console.warn(text.slice(0, 500));
         return [];
       }
@@ -210,8 +230,12 @@ export class VerificationAgent {
       console.log(`  [verification] Parsed ${verdicts.length} verdicts`);
       return verdicts;
     } catch (e) {
-      console.warn(`  [verification] Failed to parse verdicts: ${(e as Error).message}`);
-      console.warn(`  [verification] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`);
+      console.warn(
+        `  [verification] Failed to parse verdicts: ${(e as Error).message}`,
+      );
+      console.warn(
+        `  [verification] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`,
+      );
       return [];
     }
   }

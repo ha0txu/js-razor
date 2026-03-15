@@ -88,7 +88,10 @@ export class BaseReviewAgent {
 
       // Build the diff content (optimized for token usage)
       const diffContent = files
-        .map((f) => `=== ${f.filename} (${f.status}, +${f.additions}/-${f.deletions}) ===\n${f.patch}`)
+        .map(
+          (f) =>
+            `=== ${f.filename} (${f.status}, +${f.additions}/-${f.deletions}) ===\n${f.patch}`,
+        )
         .join("\n\n");
 
       // Construct full prompt
@@ -113,16 +116,21 @@ export class BaseReviewAgent {
 
         const response = await this.client.chat({
           model: this.model,
-          max_tokens: 4096,
-          system: "You are a code review agent. Always respond with valid JSON when providing findings.",
+          max_tokens: 163840,
+          system:
+            "You are a code review agent. Always respond with valid JSON when providing findings.",
           messages,
           tools: this.toolkit.getToolDefinitions(),
         });
 
-        totalTokens += response.usage.input_tokens + response.usage.output_tokens;
+        totalTokens +=
+          response.usage.input_tokens + response.usage.output_tokens;
 
         // If no tool use, extract findings from the text response
-        if (response.tool_calls.length === 0 || response.stop_reason === "end_turn") {
+        if (
+          response.tool_calls.length === 0 ||
+          response.stop_reason === "end_turn"
+        ) {
           findings = this.parseFindings(response.text_content);
           break;
         }
@@ -139,7 +147,9 @@ export class BaseReviewAgent {
             name: tc.name,
             input: tc.input,
             // Preserve Gemini thought signature for multi-turn tool use
-            ...(tc.thought_signature ? { thought_signature: tc.thought_signature } : {}),
+            ...(tc.thought_signature
+              ? { thought_signature: tc.thought_signature }
+              : {}),
           });
         }
         messages.push({ role: "assistant", content: assistantContent });
@@ -188,20 +198,25 @@ export class BaseReviewAgent {
     try {
       const jsonStr = extractJsonArray(text);
       if (!jsonStr) {
-        console.warn(`  [${this.name}] No JSON array found in response. Raw text (first 500 chars):\n${text.slice(0, 500)}`);
+        console.warn(
+          `  [${this.name}] No JSON array found in response. Raw text (first 500 chars):\n${text.slice(0, 500)}`,
+        );
         return [];
       }
 
       const parsed = JSON.parse(jsonStr);
       if (!Array.isArray(parsed)) {
-        console.warn(`  [${this.name}] Parsed JSON is not an array. Type: ${typeof parsed}`);
+        console.warn(
+          `  [${this.name}] Parsed JSON is not an array. Type: ${typeof parsed}`,
+        );
         return [];
       }
 
       // Validate and normalize each finding
       const findings = parsed
-        .filter((f: Record<string, unknown>) =>
-          f.file && f.line_start && f.severity && f.title && f.description,
+        .filter(
+          (f: Record<string, unknown>) =>
+            f.file && f.line_start && f.severity && f.title && f.description,
         )
         .map((f: Record<string, unknown>) => ({
           file: String(f.file),
@@ -214,18 +229,25 @@ export class BaseReviewAgent {
           code_snippet: String(f.code_snippet ?? ""),
           suggestion: f.suggestion ? String(f.suggestion) : undefined,
           confidence: Math.min(1, Math.max(0, Number(f.confidence ?? 0.5))),
-          similar_pr_reference: f.similar_pr_reference ? String(f.similar_pr_reference) : undefined,
+          similar_pr_reference: f.similar_pr_reference
+            ? String(f.similar_pr_reference)
+            : undefined,
         })) as Finding[];
 
-      console.log(`  [${this.name}] Parsed ${findings.length} findings from ${parsed.length} raw items`);
+      console.log(
+        `  [${this.name}] Parsed ${findings.length} findings from ${parsed.length} raw items`,
+      );
       return findings;
     } catch (e) {
-      console.warn(`  [${this.name}] Failed to parse findings: ${(e as Error).message}`);
-      console.warn(`  [${this.name}] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`);
+      console.warn(
+        `  [${this.name}] Failed to parse findings: ${(e as Error).message}`,
+      );
+      console.warn(
+        `  [${this.name}] Raw response (first 1000 chars):\n${text.slice(0, 1000)}`,
+      );
       return [];
     }
   }
-
 }
 
 function normalizeSeverity(s: string): Finding["severity"] {
@@ -235,9 +257,16 @@ function normalizeSeverity(s: string): Finding["severity"] {
 
 function normalizeCategory(c: string): Finding["category"] {
   const valid = [
-    "logic-error", "security", "performance", "react-pattern",
-    "node-pattern", "typescript", "error-handling", "edge-case",
-    "architecture", "testing",
+    "logic-error",
+    "security",
+    "performance",
+    "react-pattern",
+    "node-pattern",
+    "typescript",
+    "error-handling",
+    "edge-case",
+    "architecture",
+    "testing",
   ];
   return valid.includes(c) ? (c as Finding["category"]) : "logic-error";
 }
