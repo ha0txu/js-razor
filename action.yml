@@ -18,8 +18,13 @@ branding:
 
 inputs:
   anthropic_api_key:
-    description: "Anthropic API key for Claude"
-    required: true
+    description: "Anthropic API key for Claude models (required if using claude-* models)"
+    required: false
+    default: ""
+  gemini_api_key:
+    description: "Google Gemini API key (required if using gemini-* models)"
+    required: false
+    default: ""
   openai_api_key:
     description: "OpenAI API key for embeddings"
     required: true
@@ -39,11 +44,11 @@ inputs:
     required: false
     default: "true"
   model_review:
-    description: "Claude model for review agents"
+    description: "Model for review agents (claude-* or gemini-*). Provider is auto-detected."
     required: false
     default: "claude-sonnet-4-20250514"
   model_simple:
-    description: "Claude model for simple/trivial PRs"
+    description: "Model for simple/trivial PRs (claude-* or gemini-*). Provider is auto-detected."
     required: false
     default: "claude-haiku-4-5-20251001"
   max_findings:
@@ -111,6 +116,7 @@ runs:
       working-directory: ${{ github.action_path }}
       env:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         GITHUB_TOKEN: ${{ inputs.github_token }}
         GITHUB_OWNER: ${{ github.repository_owner }}

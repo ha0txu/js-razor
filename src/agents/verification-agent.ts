@@ -1,26 +1,28 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { ReviewConfig, Finding, AgentResult, FileDiff, ToolCall } from "../types/index.js";
+import type { LLMClient, LLMMessage, LLMContent } from "../providers/types.js";
+import { createClient } from "../providers/index.js";
 import { AgentToolkit } from "../tools/agent-tools.js";
 import { VERIFICATION_AGENT_PROMPT } from "../prompts/system-prompts.js";
 
 /**
  * Verification Agent: Cross-verifies findings from all specialized agents.
  *
+ * Provider-agnostic: works with both Claude and Gemini models.
+ *
  * This is the KEY differentiator in the architecture.
  * It re-reads the actual code for each finding and attempts to DISPROVE it.
  * Findings that can't be disproven pass through; false positives are filtered.
- *
- * Architecture note: This agent has a CLEAN perspective — it doesn't inherit
- * any specialized agent's biases. It sees the findings and the code fresh.
  */
 export class VerificationAgent {
-  private client: Anthropic;
+  private client: LLMClient;
   private config: ReviewConfig;
   private toolkit: AgentToolkit;
+  private model: string;
 
   constructor(config: ReviewConfig) {
     this.config = config;
-    this.client = new Anthropic({ apiKey: config.anthropic_api_key });
+    this.model = config.model_verification;
+    this.client = createClient(config, this.model);
     this.toolkit = new AgentToolkit(config);
   }
 
@@ -72,9 +74,9 @@ export class VerificationAgent {
         findingsText,
       ].join("\n");
 
-      // Run the agentic loop
-      const messages: Anthropic.MessageParam[] = [
-        { role: "user", content: prompt },
+      // Run the agentic loop (provider-agnostic)
+      const messages: LLMMessage[] = [
+        { role: "user", content: [{ type: "text", text: prompt }] },
       ];
 
       let verdicts: Array<{
@@ -85,55 +87,54 @@ export class VerificationAgent {
       }> = [];
 
       let iterations = 0;
-      const maxIterations = Math.min(findings.length + 3, 12); // Scale with finding count
+      const maxIterations = Math.min(findings.length + 3, 12);
 
       while (iterations < maxIterations) {
         iterations++;
 
-        const response = await this.client.messages.create({
-          model: this.config.model_verification,
+        const response = await this.client.chat({
+          model: this.model,
           max_tokens: 4096,
           system: VERIFICATION_AGENT_PROMPT,
           messages,
-          tools: this.toolkit.getToolDefinitions() as Anthropic.Tool[],
+          tools: this.toolkit.getToolDefinitions(),
         });
 
-        totalTokens += (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+        totalTokens += response.usage.input_tokens + response.usage.output_tokens;
 
-        const toolUseBlocks = response.content.filter(
-          (block): block is Anthropic.ContentBlock & { type: "tool_use" } =>
-            block.type === "tool_use",
-        );
-
-        const textBlocks = response.content.filter(
-          (block): block is Anthropic.TextBlock => block.type === "text",
-        );
-
-        if (toolUseBlocks.length === 0 || response.stop_reason === "end_turn") {
-          const text = textBlocks.map((b) => b.text).join("\n");
-          verdicts = this.parseVerdicts(text);
+        if (response.tool_calls.length === 0 || response.stop_reason === "end_turn") {
+          verdicts = this.parseVerdicts(response.text_content);
           break;
         }
 
+        // Build assistant message
+        const assistantContent: LLMContent[] = [];
+        if (response.text_content) {
+          assistantContent.push({ type: "text", text: response.text_content });
+        }
+        for (const tc of response.tool_calls) {
+          assistantContent.push({
+            type: "tool_use",
+            id: tc.id,
+            name: tc.name,
+            input: tc.input,
+          });
+        }
+        messages.push({ role: "assistant", content: assistantContent });
+
         // Execute tool calls
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
-        for (const toolBlock of toolUseBlocks) {
-          const call: ToolCall = {
-            id: toolBlock.id,
-            name: toolBlock.name,
-            input: toolBlock.input as Record<string, unknown>,
-          };
+        const toolResultContent: LLMContent[] = [];
+        for (const tc of response.tool_calls) {
+          const call: ToolCall = { id: tc.id, name: tc.name, input: tc.input };
           const result = await this.toolkit.executeTool(call);
-          toolResults.push({
+          toolResultContent.push({
             type: "tool_result",
             tool_use_id: result.tool_use_id,
             content: result.content,
             is_error: result.is_error,
           });
         }
-
-        messages.push({ role: "assistant", content: response.content });
-        messages.push({ role: "user", content: toolResults });
+        messages.push({ role: "user", content: toolResultContent });
       }
 
       // Apply verdicts to findings
@@ -150,14 +151,12 @@ export class VerificationAgent {
             ...verdict.modified_finding,
           });
         }
-        // "rejected" findings are silently dropped
       }
 
       // Findings not covered by any verdict are kept (conservative approach)
       const coveredIndices = new Set(verdicts.map((v) => v.original_finding_index));
       for (let i = 0; i < findings.length; i++) {
         if (!coveredIndices.has(i)) {
-          // Mark as lower confidence since unverified
           verifiedFindings.push({
             ...findings[i],
             confidence: Math.min(findings[i].confidence, 0.6),
@@ -179,7 +178,6 @@ export class VerificationAgent {
       };
     } catch (error) {
       console.error(`  [verification] Error: ${(error as Error).message}`);
-      // On failure, return all findings with reduced confidence
       return {
         agent_name: "verification",
         findings: findings.map((f) => ({

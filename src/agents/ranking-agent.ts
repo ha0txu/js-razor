@@ -1,5 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { ReviewConfig, Finding, ReviewOutput, PRMetadata, ComplexityAssessment, Severity } from "../types/index.js";
+import type { LLMClient } from "../providers/types.js";
+import { createClient } from "../providers/index.js";
 import { RANKING_AGENT_PROMPT } from "../prompts/system-prompts.js";
 
 /**
@@ -11,12 +12,14 @@ import { RANKING_AGENT_PROMPT } from "../prompts/system-prompts.js";
  * 3. Generates a human-friendly PR summary
  */
 export class RankingAgent {
-  private client: Anthropic;
+  private client: LLMClient;
   private config: ReviewConfig;
+  private model: string;
 
   constructor(config: ReviewConfig) {
     this.config = config;
-    this.client = new Anthropic({ apiKey: config.anthropic_api_key });
+    this.model = config.model_simple_review;
+    this.client = createClient(config, this.model);
   }
 
   async rankAndSummarize(
@@ -62,17 +65,14 @@ export class RankingAgent {
         JSON.stringify(findings, null, 2),
       ].join("\n");
 
-      const response = await this.client.messages.create({
-        model: this.config.model_simple_review, // Use cheaper model for ranking
+      const response = await this.client.chat({
+        model: this.model,
         max_tokens: 4096,
         system: RANKING_AGENT_PROMPT,
-        messages: [{ role: "user", content: prompt }],
+        messages: [{ role: "user", content: [{ type: "text", text: prompt }] }],
       });
 
-      const text = response.content
-        .filter((b): b is Anthropic.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
+      const text = response.text_content;
 
       const result = this.parseRankingResult(text, findings);
 

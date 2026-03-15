@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type {
   ReviewConfig,
   Finding,
@@ -6,13 +5,20 @@ import type {
   FileDiff,
   ToolCall,
 } from "../types/index.js";
+import type { LLMClient, LLMMessage, LLMContent } from "../providers/types.js";
+import { createClient } from "../providers/index.js";
 import { AgentToolkit } from "../tools/agent-tools.js";
 import { Retriever } from "../rag/retriever.js";
 import { buildAgentPrompt } from "../prompts/system-prompts.js";
 
 /**
  * Base class for all review agents.
- * Handles the Claude API agentic loop: prompt → tool calls → findings.
+ * Handles the LLM agentic loop: prompt → tool calls → findings.
+ *
+ * Provider-agnostic: works with both Claude and Gemini models.
+ * The provider is auto-detected from the model name prefix:
+ *   - "claude-*" → Anthropic
+ *   - "gemini-*" → Google Gemini
  *
  * Each agent:
  * 1. Receives a system prompt specific to its specialty
@@ -24,7 +30,7 @@ import { buildAgentPrompt } from "../prompts/system-prompts.js";
  * or hits the iteration limit (prevents runaway tool use).
  */
 export class BaseReviewAgent {
-  protected client: Anthropic;
+  protected client: LLMClient;
   protected config: ReviewConfig;
   protected toolkit: AgentToolkit;
   protected retriever: Retriever;
@@ -49,7 +55,8 @@ export class BaseReviewAgent {
     this.model = options?.model ?? config.model_review_agent;
     this.maxIterations = options?.maxIterations ?? 8;
 
-    this.client = new Anthropic({ apiKey: config.anthropic_api_key });
+    // Auto-detect provider from model name
+    this.client = createClient(config, this.model);
     this.toolkit = new AgentToolkit(config);
     this.retriever = new Retriever(config);
   }
@@ -92,9 +99,9 @@ export class BaseReviewAgent {
         ragContext,
       );
 
-      // Run the agentic loop
-      const messages: Anthropic.MessageParam[] = [
-        { role: "user", content: fullPrompt },
+      // Run the agentic loop (provider-agnostic)
+      const messages: LLMMessage[] = [
+        { role: "user", content: [{ type: "text", text: fullPrompt }] },
       ];
 
       let findings: Finding[] = [];
@@ -103,53 +110,50 @@ export class BaseReviewAgent {
       while (iterations < this.maxIterations) {
         iterations++;
 
-        const response = await this.client.messages.create({
+        const response = await this.client.chat({
           model: this.model,
           max_tokens: 4096,
           system: "You are a code review agent. Always respond with valid JSON when providing findings.",
           messages,
-          tools: this.toolkit.getToolDefinitions() as Anthropic.Tool[],
+          tools: this.toolkit.getToolDefinitions(),
         });
 
-        totalTokens += (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
-
-        // Check for tool use
-        const toolUseBlocks = response.content.filter(
-          (block): block is Anthropic.ContentBlock & { type: "tool_use" } =>
-            block.type === "tool_use",
-        );
-
-        const textBlocks = response.content.filter(
-          (block): block is Anthropic.TextBlock => block.type === "text",
-        );
+        totalTokens += response.usage.input_tokens + response.usage.output_tokens;
 
         // If no tool use, extract findings from the text response
-        if (toolUseBlocks.length === 0 || response.stop_reason === "end_turn") {
-          const text = textBlocks.map((b) => b.text).join("\n");
-          findings = this.parseFindings(text);
+        if (response.tool_calls.length === 0 || response.stop_reason === "end_turn") {
+          findings = this.parseFindings(response.text_content);
           break;
         }
 
-        // Execute tool calls and continue the loop
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
-        for (const toolBlock of toolUseBlocks) {
-          const call: ToolCall = {
-            id: toolBlock.id,
-            name: toolBlock.name,
-            input: toolBlock.input as Record<string, unknown>,
-          };
+        // Build assistant message content (text + tool calls)
+        const assistantContent: LLMContent[] = [];
+        if (response.text_content) {
+          assistantContent.push({ type: "text", text: response.text_content });
+        }
+        for (const tc of response.tool_calls) {
+          assistantContent.push({
+            type: "tool_use",
+            id: tc.id,
+            name: tc.name,
+            input: tc.input,
+          });
+        }
+        messages.push({ role: "assistant", content: assistantContent });
+
+        // Execute tool calls and add results
+        const toolResultContent: LLMContent[] = [];
+        for (const tc of response.tool_calls) {
+          const call: ToolCall = { id: tc.id, name: tc.name, input: tc.input };
           const result = await this.toolkit.executeTool(call);
-          toolResults.push({
+          toolResultContent.push({
             type: "tool_result",
             tool_use_id: result.tool_use_id,
             content: result.content,
             is_error: result.is_error,
           });
         }
-
-        // Add assistant response and tool results to conversation
-        messages.push({ role: "assistant", content: response.content });
-        messages.push({ role: "user", content: toolResults });
+        messages.push({ role: "user", content: toolResultContent });
       }
 
       return {
